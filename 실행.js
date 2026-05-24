@@ -202,8 +202,33 @@ client.on('messageCreate', async message => {
         }
 
         await message.reply(replyMsg);
+        
     }
+// [추가] 데이터 파일이 깨질 경우를 대비한 자동 백업 함수
+const backupDB = (file) => {
+    if (fs.existsSync(file)) {
+        const backupFile = file + '.bak';
+        fs.copyFileSync(file, backupFile);
+    }
+};
 
+// saveDB 함수를 살짝 수정하여 저장할 때마다 백업
+const saveDB = (file, data) => {
+    backupDB(file); // 저장하기 직전에 기존 파일을 .bak으로 복사
+    fs.writeFileSync(file, JSON.stringify(data, null, 2));
+};
+// --------------------------------------------------
+// [추가] 출석 횟수 확인 로직 (!출석횟수)
+// --------------------------------------------------
+if (message.content === '!출석횟수') {
+    const db = loadDB(DB_FILE); // DB 파일 로드
+    const userId = message.author.id; // 명령어를 친 유저 ID
+    
+    // 유저 데이터가 있으면 count를 가져오고, 없으면 0으로 설정
+    const userData = db[userId] || { count: 0 };
+    
+    return message.reply(`📊 **${message.member.displayName}**님의 현재까지 총 출석 횟수는 **${userData.count}회**입니다.`);
+}
     // 2. 누군가 채팅을 쳤을 때 고정 메시지 끌어내리기
     if (stickyMessages.has(message.channelId)) {
         if (isStickyUpdating.has(message.channelId)) return;
