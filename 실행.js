@@ -223,9 +223,9 @@ const saveDB = (file, data) => {
     fs.writeFileSync(file, JSON.stringify(data, null, 2));
 };
 // --------------------------------------------------
-// [추가] 출석 횟수 확인 로직 (!출석횟수)
+// [추가] 출석 횟수 확인 로직 (!출석확인)
 // --------------------------------------------------
-if (message.content === '!출석횟수') {
+if (message.content === '!출석확인') {
     const db = loadDB(DB_FILE); // DB 파일 로드
     const userId = message.author.id; // 명령어를 친 유저 ID
     
