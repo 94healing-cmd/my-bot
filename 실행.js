@@ -140,11 +140,16 @@ const commands = [
     new SlashCommandBuilder()
         .setName('고정공지')
         .setDescription('채널 맨 아래를 따라다니는 고정 공지를 설정합니다. (관리자 전용)')
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator), // 🚀 [수정] 옵션을 없애고 팝업창을 띄우도록 변경
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
     new SlashCommandBuilder()
         .setName('공지해지')
         .setDescription('현재 채널의 고정 공지를 해제합니다. (관리자 전용)')
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+    // 🚀 [추가] 출석 횟수 조회 명령어
+    new SlashCommandBuilder()
+        .setName('출석확인')
+        .setDescription('유저의 출석 횟수를 확인합니다.')
+        .addUserOption(opt => opt.setName('대상').setDescription('확인할 유저를 선택하세요 (비워두면 본인 확인)').setRequired(false))
 ].map(command => command.toJSON());
 
 // ==========================================
