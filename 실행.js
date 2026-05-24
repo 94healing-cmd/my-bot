@@ -33,7 +33,7 @@ const client = new Client({
 });
 
 // ==========================================
-// [2] 유틸리티 함수 (중복 제거)
+// [2] 유틸리티 함수
 // ==========================================
 const loadDB = (file) => {
     if (!fs.existsSync(file)) fs.writeFileSync(file, JSON.stringify({}));
@@ -42,7 +42,6 @@ const loadDB = (file) => {
 
 const saveDB = (file, data) => fs.writeFileSync(file, JSON.stringify(data, null, 2));
 
-// (추가) 유저 데이터 초기화 중복을 방지하는 함수
 const getUserDB = (db, userId) => {
     if (!db[userId]) db[userId] = { count: 0, lastDate: '' };
     return db[userId];
@@ -84,7 +83,7 @@ async function updateRoles(member, currentCount) {
 }
 
 // ==========================================
-// [3] 슬래시 명령어 세팅
+// [3] 슬래시 명령어 세팅 (고정공지, 공지해지 추가)
 // ==========================================
 const commands = [
     new SlashCommandBuilder()
@@ -99,9 +98,18 @@ const commands = [
         .addRoleOption(opt => opt.setName('지급역할').setDescription('달성 시 유저에게 줄 역할을 선택하세요').setRequired(true)),
     new SlashCommandBuilder()
         .setName('공지')
-        .setDescription('채널에 공지사항을 전송합니다. (관리자 전용)')
+        .setDescription('채널에 일반 공지사항을 전송합니다. (관리자 전용)')
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
-        .addStringOption(opt => opt.setName('내용').setDescription('공지할 내용을 입력하세요').setRequired(true))
+        .addStringOption(opt => opt.setName('내용').setDescription('공지할 내용을 입력하세요').setRequired(true)),
+    new SlashCommandBuilder()
+        .setName('고정공지')
+        .setDescription('채널 맨 아래를 따라다니는 고정 공지를 설정합니다. (관리자 전용)')
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+        .addStringOption(opt => opt.setName('내용').setDescription('고정할 공지 내용을 입력하세요').setRequired(true)),
+    new SlashCommandBuilder()
+        .setName('공지해지')
+        .setDescription('현재 채널의 고정 공지를 해제합니다. (관리자 전용)')
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
 ].map(command => command.toJSON());
 
 // ==========================================
@@ -130,11 +138,11 @@ client.once('ready', async () => {
 // [5] 채팅 메시지 이벤트 (!출석 및 고정 메시지 갱신)
 // ==========================================
 client.on('messageCreate', async message => {
-    // 봇이 보낸 메시지는 무시 (무한 루프 방지)
+    // 봇이 보낸 메시지는 무시
     if (message.author.bot) return;
 
     // --------------------------------------------------
-    // 1. 기존 출석 체크 로직
+    // 1. 출석 체크 로직
     // --------------------------------------------------
     if (message.content === '!출석') {
         if (message.channelId !== ATTENDANCE_CHANNEL_ID) {
@@ -165,64 +173,7 @@ client.on('messageCreate', async message => {
     }
 
     // --------------------------------------------------
-    // 2. 고정 메시지(Sticky) 명령어 처리 (!고정공지, !공지해지)
-    // --------------------------------------------------
-    const isManager = message.member && (message.member.roles.cache.has(MANAGER_ROLE_ID) || message.member.permissions.has('Administrator'));
-
-    // 고정 메시지 설정 명령어
-    if (message.content.startsWith('!고정공지 ') && isManager) {
-        const content = message.content.replace('!고정공지 ', '').trim();
-        if (!content) return message.reply('❌ 고정할 내용을 입력해주세요. (예: `!고정공지 공지내용`)');
-
-        // 기존 고정 메시지가 있다면 삭제
-        const existingData = stickyMessages.get(message.channelId);
-        if (existingData && existingData.lastMessageId) {
-            try {
-                const oldMsg = await message.channel.messages.fetch(existingData.lastMessageId);
-                if (oldMsg) await oldMsg.delete();
-            } catch (error) { /* 이미 지워진 메시지일 경우 무시 */ }
-        }
-
-        // 새 고정 메시지 전송
-        const sentMessage = await message.channel.send(`📌 **[채널 공지]**\n\n${content}`);
-
-        // 데이터 메모리 및 파일에 저장
-        const stickyData = { content: content, lastMessageId: sentMessage.id };
-        stickyMessages.set(message.channelId, stickyData);
-        
-        const db = loadDB(STICKY_FILE);
-        db[message.channelId] = stickyData;
-        saveDB(STICKY_FILE, db);
-
-        await message.delete(); // 관리자가 친 '!고정공지' 명령어 텍스트 자체는 깔끔하게 삭제
-        return;
-    }
-
-    // 고정 메시지 해제 명령어
-    if (message.content === '!공지해지' && isManager) {
-        const existingData = stickyMessages.get(message.channelId);
-        if (existingData) {
-            if (existingData.lastMessageId) {
-                try {
-                    const oldMsg = await message.channel.messages.fetch(existingData.lastMessageId);
-                    if (oldMsg) await oldMsg.delete();
-                } catch (error) {}
-            }
-            
-            // 데이터 삭제
-            stickyMessages.delete(message.channelId);
-            const db = loadDB(STICKY_FILE);
-            delete db[message.channelId];
-            saveDB(STICKY_FILE, db);
-            
-            await message.channel.send('✅ 이 채널의 고정 메시지가 해제되었습니다.').then(m => setTimeout(() => m.delete(), 3000));
-            await message.delete();
-        }
-        return;
-    }
-
-    // --------------------------------------------------
-    // 3. 누군가 채팅을 쳤을 때 고정 메시지 끌어내리기 (갱신)
+    // 2. 누군가 채팅을 쳤을 때 고정 메시지 끌어내리기 (갱신)
     // --------------------------------------------------
     if (stickyMessages.has(message.channelId)) {
         const stickyData = stickyMessages.get(message.channelId);
@@ -233,7 +184,7 @@ client.on('messageCreate', async message => {
                 const oldMsg = await message.channel.messages.fetch(stickyData.lastMessageId);
                 if (oldMsg) await oldMsg.delete();
             } catch (error) {
-                // 메시지를 찾을 수 없는 경우 무시 (누군가 수동으로 지웠을 때 대비)
+                // 수동 삭제 등 예외 무시
             }
         }
 
@@ -250,7 +201,9 @@ client.on('messageCreate', async message => {
     }
 });
 
+// ==========================================
 // [6] 슬래시 명령어 이벤트 핸들러
+// ==========================================
 client.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
@@ -292,15 +245,64 @@ client.on('interactionCreate', async interaction => {
     if (command === '공지') {
         const content = interaction.options.getString('내용');
         await interaction.channel.send(content);
-        return interaction.reply({ content: '✅ 공지가 전송되었습니다.', ephemeral: true });
+        return interaction.reply({ content: '✅ 일반 공지가 전송되었습니다.', ephemeral: true });
+    }
+
+    if (command === '고정공지') {
+        const content = interaction.options.getString('내용');
+
+        // 기존 고정 메시지 삭제
+        const existingData = stickyMessages.get(interaction.channelId);
+        if (existingData && existingData.lastMessageId) {
+            try {
+                const oldMsg = await interaction.channel.messages.fetch(existingData.lastMessageId);
+                if (oldMsg) await oldMsg.delete();
+            } catch (error) {}
+        }
+
+        // 새 고정 메시지 전송
+        const sentMessage = await interaction.channel.send(`📌 **[채널 공지]**\n\n${content}`);
+
+        // 데이터 저장
+        const stickyData = { content: content, lastMessageId: sentMessage.id };
+        stickyMessages.set(interaction.channelId, stickyData);
+        
+        const db = loadDB(STICKY_FILE);
+        db[interaction.channelId] = stickyData;
+        saveDB(STICKY_FILE, db);
+
+        // 명령어 응답 (관리자만 볼 수 있게)
+        return interaction.reply({ content: '✅ 고정 공지가 설정되었습니다.', ephemeral: true });
+    }
+
+    if (command === '공지해지') {
+        const existingData = stickyMessages.get(interaction.channelId);
+        if (existingData) {
+            if (existingData.lastMessageId) {
+                try {
+                    const oldMsg = await interaction.channel.messages.fetch(existingData.lastMessageId);
+                    if (oldMsg) await oldMsg.delete();
+                } catch (error) {}
+            }
+            
+            // 데이터 삭제
+            stickyMessages.delete(interaction.channelId);
+            const db = loadDB(STICKY_FILE);
+            delete db[interaction.channelId];
+            saveDB(STICKY_FILE, db);
+            
+            return interaction.reply({ content: '✅ 이 채널의 고정 메시지가 해제되었습니다.', ephemeral: true });
+        } else {
+            return interaction.reply({ content: '❌ 이 채널에는 설정된 고정 메시지가 없습니다.', ephemeral: true });
+        }
     }
 });
 
 // ==========================================
-// [7] 24시간 유지를 위한 웹서버 (Express 압축)
+// [7] 24시간 유지를 위한 웹서버 (Express)
 // ==========================================
 const app = express();
-app.get('/', (req, res) => res.send('봇이 24시간 살아있습니다!'));
-app.listen(process.env.PORT || 3000, () => console.log(`🌐 가짜 웹서버가 실행 중입니다.`));
+app.get('/', (req, res) => res.send('봇이 정상적으로 작동 중입니다.'));
+app.listen(process.env.PORT || 3000, () => console.log(`🌐 웹서버가 실행 중입니다.`));
 
 client.login(TOKEN);
