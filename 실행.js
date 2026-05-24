@@ -170,13 +170,13 @@ client.on('messageCreate', async (message) => {
         const ranking = Object.entries(db)
             .map(([id, data]) => ({ id, count: data.count }))
             .sort((a, b) => b.count - a.count)
-            .slice(0, 15);
+            .slice(0, 50);
 
         if (ranking.length === 0) return message.reply('❌ 등록된 출석 데이터가 없습니다.');
 
         const rankList = ranking.map((u, i) => `**${i + 1}위** | <@${u.id}> - **${u.count}회**`).join('\n');
         const rankEmbed = new EmbedBuilder()
-            .setTitle('🏆 전체 출석 랭킹 TOP 15')
+            .setTitle('🏆 전체 출석 랭킹 TOP 50')
             .setDescription(rankList)
             .setColor('#f1c40f')
             .setFooter({ text: '매일 !출석으로 순위를 높여보세요!' });
@@ -243,7 +243,7 @@ client.on('interactionCreate', async (interaction) => {
 
     if (!interaction.isChatInputCommand()) return;
 
-    // 순위 확인 (/출석순위) : 누구나 가능
+    // 순위 확인 (출석순위) : 누구나 가능
     if (interaction.commandName === '출석순위') {
         const db = loadDB(DB_FILE);
         const ranking = Object.entries(db).map(([id, d]) => ({ id, count: d.count })).sort((a, b) => b.count - a.count).slice(0, 15);
