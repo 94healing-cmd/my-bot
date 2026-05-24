@@ -97,11 +97,6 @@ const commands = [
         .addIntegerOption(opt => opt.setName('목표횟수').setDescription('몇 회 달성 시 지급할지 숫자를 입력하세요').setRequired(true))
         .addRoleOption(opt => opt.setName('지급역할').setDescription('달성 시 유저에게 줄 역할을 선택하세요').setRequired(true)),
     new SlashCommandBuilder()
-        .setName('공지')
-        .setDescription('채널에 일반 공지사항을 전송합니다. (관리자 전용)')
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
-        .addStringOption(opt => opt.setName('내용').setDescription('공지할 내용을 입력하세요').setRequired(true)),
-    new SlashCommandBuilder()
         .setName('고정공지')
         .setDescription('채널 맨 아래를 따라다니는 고정 공지를 설정합니다. (관리자 전용)')
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
@@ -240,12 +235,6 @@ client.on('interactionCreate', async interaction => {
         saveDB(REWARD_FILE, rewards);
 
         return interaction.reply(`✅ 세팅 완료! 앞으로 출석 **${reqCount}회** 달성 시 **<@&${role.id}>** 역할이 지급됩니다.`);
-    }
-
-    if (command === '공지') {
-        const content = interaction.options.getString('내용');
-        await interaction.channel.send(content);
-        return interaction.reply({ content: '✅ 일반 공지가 전송되었습니다.', ephemeral: true });
     }
 
     if (command === '고정공지') {
