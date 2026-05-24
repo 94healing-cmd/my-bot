@@ -23,6 +23,8 @@ const REWARD_FILE = './rewards.json';
 const STICKY_FILE = './sticky.json'; 
 
 const stickyMessages = new Map(); 
+// 🚀 [추가] 고정 공지 중복 방지를 위한 Lock(잠금) 장치
+const isStickyUpdating = new Set(); 
 
 const client = new Client({
     intents: [
@@ -84,7 +86,7 @@ async function updateRoles(member, currentCount) {
 }
 
 // ------------------------------------------
-// 🛠 고정 메시지 전용 유틸리티 (중복 제거용)
+// 🛠 고정 메시지 전용 유틸리티
 // ------------------------------------------
 async function deleteMessageSafe(channel, messageId) {
     if (!messageId) return;
@@ -92,7 +94,7 @@ async function deleteMessageSafe(channel, messageId) {
         const oldMsg = await channel.messages.fetch(messageId);
         if (oldMsg) await oldMsg.delete();
     } catch (error) {
-        // 이미 삭제되었거나 권한 부족 등 예외 무시
+        // 무시
     }
 }
 
@@ -136,7 +138,7 @@ const commands = [
         .setName('고정공지')
         .setDescription('채널 맨 아래를 따라다니는 고정 공지를 설정합니다. (관리자 전용)')
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
-        .addStringOption(opt => opt.setName('내용').setDescription('고정할 공지 내용을 입력하세요').setRequired(true)),
+        .addStringOption(opt => opt.setName('내용').setDescription('내용을 입력하세요. (줄바꿈은 \\n 입력)').setRequired(true)),
     new SlashCommandBuilder()
         .setName('공지해지')
         .setDescription('현재 채널의 고정 공지를 해제합니다. (관리자 전용)')
@@ -171,9 +173,7 @@ client.once('ready', async () => {
 client.on('messageCreate', async message => {
     if (message.author.bot) return;
 
-    // --------------------------------------------------
     // 1. 출석 체크 로직
-    // --------------------------------------------------
     if (message.content === '!출석') {
         if (message.channelId !== ATTENDANCE_CHANNEL_ID) {
             return message.reply('❌ 지정된 출석 채널에서만 출석할 수 있습니다.');
@@ -202,18 +202,24 @@ client.on('messageCreate', async message => {
         await message.reply(replyMsg);
     }
 
-    // --------------------------------------------------
     // 2. 누군가 채팅을 쳤을 때 고정 메시지 끌어내리기
-    // --------------------------------------------------
     if (stickyMessages.has(message.channelId)) {
-        const stickyData = stickyMessages.get(message.channelId);
+        // 🚀 이미 업데이트 로직이 돌고 있다면 중단 (중복 방지)
+        if (isStickyUpdating.has(message.channelId)) return;
         
-        // 유틸리티 함수들을 활용하여 코드 간소화
-        await deleteMessageSafe(message.channel, stickyData.lastMessageId);
-        const sentMessage = await sendStickyEmbed(message.channel, stickyData.content);
-        
-        stickyData.lastMessageId = sentMessage.id;
-        saveStickyData(message.channelId, stickyData);
+        // 락 걸기
+        isStickyUpdating.add(message.channelId);
+
+        try {
+            const stickyData = stickyMessages.get(message.channelId);
+            await deleteMessageSafe(message.channel, stickyData.lastMessageId);
+            const sentMessage = await sendStickyEmbed(message.channel, stickyData.content);
+            stickyData.lastMessageId = sentMessage.id;
+            saveStickyData(message.channelId, stickyData);
+        } finally {
+            // 처리가 끝나면 락 해제
+            isStickyUpdating.delete(message.channelId);
+        }
     }
 });
 
@@ -230,19 +236,16 @@ client.on('interactionCreate', async interaction => {
         return interaction.reply({ content: '❌ 이 명령어를 사용할 권한이 없습니다.', ephemeral: true });
     }
 
+    // ... [출석조절, 보상설정 코드는 동일하므로 생략 없이 유지] ...
     if (command === '출석조절') {
         const targetUser = interaction.options.getUser('대상');
         const newCount = interaction.options.getInteger('횟수');
-        
         const db = loadDB(DB_FILE);
         const userData = getUserDB(db, targetUser.id);
-        
         userData.count = newCount;
         saveDB(DB_FILE, db);
-
         const targetMember = await interaction.guild.members.fetch(targetUser.id).catch(() => null);
         if (targetMember) await updateRoles(targetMember, newCount);
-
         const targetName = targetMember ? targetMember.displayName : targetUser.username;
         return interaction.reply(`🔧 **${targetName}**님의 출석 횟수가 **${newCount}회**로 변경되었으며, 역할이 업데이트되었습니다.`);
     }
@@ -251,23 +254,22 @@ client.on('interactionCreate', async interaction => {
         const reqCount = interaction.options.getInteger('목표횟수');
         const role = interaction.options.getRole('지급역할');
         const rewards = loadDB(REWARD_FILE);
-
         rewards[reqCount] = role.id;
         saveDB(REWARD_FILE, rewards);
-
         return interaction.reply(`✅ 세팅 완료! 앞으로 출석 **${reqCount}회** 달성 시 **<@&${role.id}>** 역할이 지급됩니다.`);
     }
 
     if (command === '고정공지') {
-        const content = interaction.options.getString('내용');
+        // 🚀 [추가] 사용자가 입력한 '\n'을 실제 줄바꿈(엔터)으로 변환
+        let content = interaction.options.getString('내용');
+        content = content.replace(/\\n/g, '\n');
+
         const existingData = stickyMessages.get(interaction.channelId);
 
-        // 기존 고정 메시지가 있으면 삭제
         if (existingData) {
             await deleteMessageSafe(interaction.channel, existingData.lastMessageId);
         }
 
-        // 새 임베드 전송 및 데이터 저장
         const sentMessage = await sendStickyEmbed(interaction.channel, content);
         saveStickyData(interaction.channelId, { content: content, lastMessageId: sentMessage.id });
 
@@ -276,11 +278,9 @@ client.on('interactionCreate', async interaction => {
 
     if (command === '공지해지') {
         const existingData = stickyMessages.get(interaction.channelId);
-        
         if (existingData) {
             await deleteMessageSafe(interaction.channel, existingData.lastMessageId);
             removeStickyData(interaction.channelId);
-            
             return interaction.reply({ content: '✅ 이 채널의 고정 메시지가 해제되었습니다.', ephemeral: true });
         } else {
             return interaction.reply({ content: '❌ 이 채널에는 설정된 고정 메시지가 없습니다.', ephemeral: true });
