@@ -152,7 +152,7 @@ client.on('messageCreate', async message => {
 
         const stickyEmbed = new EmbedBuilder()
             .setColor('#FFD700')
-            .setTitle('📌 [ 고정 안내 ]')
+            .setTitle('📌 [ 공 지 사 항 ]')
             .setDescription(`\`\`\`\n${content}\n\`\`\``);
 
         const newMsg = await message.channel.send({ embeds: [stickyEmbed] });
@@ -226,7 +226,7 @@ client.on('messageCreate', async message => {
 
         const stickyEmbed = new EmbedBuilder()
             .setColor('#FFD700')
-            .setTitle('📌 [ 고정 안내 ]')
+            .setTitle('📌 [ 공 지 사 항 ]')
             .setDescription(`\`\`\`\n${stickyData.content}\n\`\`\``);
 
         try {
@@ -279,21 +279,8 @@ client.on('interactionCreate', async interaction => {
 
         return interaction.reply(`✅ 세팅 완료! 앞으로 출석 **${reqCount}회** 달성 시 **<@&${role.id}>** 역할이 지급됩니다.`);
     }
-
-    if (command === '공지') {
-        const content = interaction.options.getString('내용');
-        
-        const noticeEmbed = new EmbedBuilder()
-            .setColor('#2B2D31')
-            .setTitle('📢 [ 공 지 사 항 ]')
-            .setDescription(content)
-            .setTimestamp()
-            .setFooter({ text: `${interaction.member.displayName}님이 작성함`, iconURL: interaction.user.displayAvatarURL() });
-
-        await interaction.channel.send({ embeds: [noticeEmbed] });
-        return interaction.reply({ content: '✅ 공지가 채널에 전송되었습니다.', ephemeral: true });
     }
-});
+);
 
 // ==========================================
 // [7] 24시간 유지를 위한 가짜 웹서버 (Express)
