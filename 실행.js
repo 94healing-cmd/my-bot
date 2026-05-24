@@ -312,10 +312,109 @@ client.on('interactionCreate', async interaction => {
         }
     }
 });
+// ==========================================
+// [7] TTS 봇 전체 코드
+// ==========================================
+const { Client, GatewayIntentBits } = require('discord.js');
+const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus } = require('@discordjs/voice');
+const googleTTS = require('google-tts-api');
 
 // ==========================================
-// [7] 24시간 유지를 위한 웹서버 (Express)
+// [1] 기본 설정 (수정 필요)
 // ==========================================
+const TTS_CHANNEL_ID = '1505249610632007861'; // 👈 이 채널에서만 봇이 작동합니다.
+
+const client = new Client({
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildVoiceStates // 음성 채널 접속을 위해 필수
+    ]
+});
+
+let currentConnection = null;
+const audioPlayer = createAudioPlayer();
+
+client.once('ready', () => {
+    console.log(`✅ ${client.user.tag} TTS 봇 구동 완료!`);
+    console.log(`📌 허용된 TTS 채널 ID: ${TTS_CHANNEL_ID}`);
+});
+
+// ==========================================
+// [2] 메시지 이벤트 핸들러
+// ==========================================
+client.on('messageCreate', async (message) => {
+    // 봇이 보낸 메시지는 무시
+    if (message.author.bot) return;
+
+    // 🚀 [핵심] 지정된 텍스트 채널이 아니면 무시
+    if (message.channelId !== TTS_CHANNEL_ID) return;
+
+    // --------------------------------------------------
+    // 기능 1: 봇 음성 채널 입장 (!입장)
+    // --------------------------------------------------
+    if (message.content === '!입장') {
+        const voiceChannel = message.member.voice.channel;
+        if (!voiceChannel) {
+            return message.reply('❌ 봇을 부르려면 먼저 음성 채널에 들어가주세요!');
+        }
+
+        currentConnection = joinVoiceChannel({
+            channelId: voiceChannel.id,
+            guildId: message.guild.id,
+            adapterCreator: message.guild.voiceAdapterCreator,
+        });
+
+        currentConnection.subscribe(audioPlayer); 
+        return message.reply('✅ 음성 채널에 입장했습니다! 지금부터 이 채널에 치는 채팅을 읽어드립니다.');
+    }
+
+    // --------------------------------------------------
+    // 기능 2: 봇 음성 채널 퇴장 (!퇴장)
+    // --------------------------------------------------
+    if (message.content === '!퇴장') {
+        if (currentConnection) {
+            currentConnection.destroy();
+            currentConnection = null;
+            return message.reply('👋 음성 채널에서 퇴장합니다.');
+        }
+        return message.reply('❌ 현재 연결된 음성 채널이 없습니다.');
+    }
+
+    // --------------------------------------------------
+    // 기능 3: 채팅을 음성으로 읽어주기
+    // --------------------------------------------------
+    // 명령어가 아니고(!로 시작하지 않음), 봇이 음성 채널에 연결되어 있을 때만 실행
+    if (!message.content.startsWith('!') && currentConnection) {
+        
+        // 글자 수 제한 (구글 TTS 무료 API는 200자 제한이 있음)
+        let textToRead = message.content;
+        if (textToRead.length > 200) {
+            textToRead = textToRead.substring(0, 197) + "..."; // 200자 넘으면 자르고 읽음
+        }
+
+        try {
+            // Google TTS API로 텍스트를 음성 URL로 변환
+            const url = googleTTS.getAudioUrl(textToRead, {
+                lang: 'ko',  // 한국어
+                slow: false, // 속도 정상
+                host: 'https://translate.google.com',
+            });
+
+            // 오디오 재생
+            const resource = createAudioResource(url);
+            audioPlayer.play(resource);
+            
+        } catch (error) {
+            console.error('❌ TTS 변환 오류:', error);
+        }
+    }
+});
+// ==========================================
+// [8] 24시간 유지를 위한 웹서버 (Express)
+// ==========================================
+
 const app = express();
 app.get('/', (req, res) => res.send('봇이 정상적으로 작동 중입니다.'));
 app.listen(process.env.PORT || 3000, () => console.log(`🌐 웹서버가 실행 중입니다.`));
