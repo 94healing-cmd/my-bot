@@ -4,20 +4,16 @@ const {
     REST,
     Routes,
     SlashCommandBuilder,
-    PermissionFlagsBits,
-    EmbedBuilder
+    PermissionFlagsBits
 } = require('discord.js');
 const fs = require('fs');
-const express = require('express'); // 24시간 유지를 위한 웹서버 모듈 추가
+const express = require('express');
 
 // ==========================================
-// [1] 기본 설정 (토큰 및 ID)
+// [1] 기본 설정
 // ==========================================
-// 🚨 보안을 위해 코드에 토큰을 직접 적지 않고 Render 환경 변수에서 가져옵니다.
-// 이렇게 적어야 "DISCORD_TOKEN이라는 이름표가 붙은 서랍(금고)을 열어라!" 라는 뜻이 됩니다.
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = '1504881356021170226';
-
 const ATTENDANCE_CHANNEL_ID = '1445449644678320198';
 const MANAGER_ROLE_ID = '1445443506175873164';      
 
@@ -37,25 +33,29 @@ const client = new Client({
 });
 
 // ==========================================
-// [2] 유틸리티 함수
+// [2] 유틸리티 함수 (중복 제거)
 // ==========================================
-function loadDB(file) {
+const loadDB = (file) => {
     if (!fs.existsSync(file)) fs.writeFileSync(file, JSON.stringify({}));
     return JSON.parse(fs.readFileSync(file, 'utf8'));
-}
+};
 
-function saveDB(file, data) {
-    fs.writeFileSync(file, JSON.stringify(data, null, 2));
-}
+const saveDB = (file, data) => fs.writeFileSync(file, JSON.stringify(data, null, 2));
 
-function getTodayInfo() {
+// (추가) 유저 데이터 초기화 중복을 방지하는 함수
+const getUserDB = (db, userId) => {
+    if (!db[userId]) db[userId] = { count: 0, lastDate: '' };
+    return db[userId];
+};
+
+const getTodayInfo = () => {
     const now = new Date();
     const days = ['일', '월', '화', '수', '목', '금', '토'];
     return {
         dateString: `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`,
         dayName: `${days[now.getDay()]}요일`              
     };
-}
+};
 
 async function updateRoles(member, currentCount) {
     const rewards = loadDB(REWARD_FILE);
@@ -78,7 +78,6 @@ async function updateRoles(member, currentCount) {
             return true;
         } catch (error) {
             console.error('역할 변경 실패:', error);
-            return false;
         }
     }
     return false;
@@ -91,22 +90,22 @@ const commands = [
     new SlashCommandBuilder()
         .setName('출석조절')
         .setDescription('유저의 출석 횟수를 변경합니다. (관리자 전용)')
-        .addUserOption(option => option.setName('대상').setDescription('출석 횟수를 변경할 유저를 선택하세요').setRequired(true))
-        .addIntegerOption(option => option.setName('횟수').setDescription('변경할 숫자를 입력하세요').setRequired(true)),
+        .addUserOption(opt => opt.setName('대상').setDescription('출석 횟수를 변경할 유저를 선택하세요').setRequired(true))
+        .addIntegerOption(opt => opt.setName('횟수').setDescription('변경할 숫자를 입력하세요').setRequired(true)),
     new SlashCommandBuilder()
         .setName('보상설정')
         .setDescription('출석 달성 시 지급할 역할을 세팅합니다. (관리자 전용)')
-        .addIntegerOption(option => option.setName('목표횟수').setDescription('몇 회 달성 시 지급할지 숫자를 입력하세요').setRequired(true))
-        .addRoleOption(option => option.setName('지급역할').setDescription('달성 시 유저에게 줄 역할을 선택하세요').setRequired(true)),
+        .addIntegerOption(opt => opt.setName('목표횟수').setDescription('몇 회 달성 시 지급할지 숫자를 입력하세요').setRequired(true))
+        .addRoleOption(opt => opt.setName('지급역할').setDescription('달성 시 유저에게 줄 역할을 선택하세요').setRequired(true)),
     new SlashCommandBuilder()
         .setName('공지')
         .setDescription('채널에 공지사항을 전송합니다. (관리자 전용)')
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
-        .addStringOption(option => option.setName('내용').setDescription('공지할 내용을 입력하세요').setRequired(true))
+        .addStringOption(opt => opt.setName('내용').setDescription('공지할 내용을 입력하세요').setRequired(true))
 ].map(command => command.toJSON());
 
 // ==========================================
-// [4] 봇 준비 이벤트
+// [4] 봇 준비 및 이벤트 핸들러
 // ==========================================
 client.once('ready', async () => {
     console.log(`✅ 봇이 온라인 상태가 되었습니다! 로그인된 계정: ${client.user.tag}`);
@@ -128,121 +127,130 @@ client.once('ready', async () => {
 });
 
 // ==========================================
-// [5] 채팅 메시지 이벤트 (!출석 + 고정 메시지 갱신 + ?stick 명령어)
+// [5] 채팅 메시지 이벤트 (!출석 및 고정 메시지 갱신)
 // ==========================================
 client.on('messageCreate', async message => {
+    // 봇이 보낸 메시지는 무시 (무한 루프 방지)
     if (message.author.bot) return;
 
-    const channelId = message.channel.id;
-    const isManager = message.member.permissions.has('Administrator') || message.member.roles.cache.has(MANAGER_ROLE_ID);
-
-    if (message.content.startsWith('?stick ')) {
-        if (!isManager) return message.reply('❌ 관리자만 사용할 수 있습니다.');
-        
-        const content = message.content.slice(7).trim();
-        if (!content) return message.reply('⚠️ 고정할 내용을 입력해주세요.');
-
-        const existing = stickyMessages.get(channelId);
-        if (existing && existing.lastMessageId) {
-            try {
-                const oldMsg = await message.channel.messages.fetch(existing.lastMessageId);
-                if (oldMsg) await oldMsg.delete();
-            } catch (e) {}
-        }
-
-        const stickyEmbed = new EmbedBuilder()
-            .setColor('#FFD700')
-            .setTitle('📌 [ 공 지 사 항 ]')
-            .setDescription(`\`\`\`\n${content}\n\`\`\``);
-
-        const newMsg = await message.channel.send({ embeds: [stickyEmbed] });
-        
-        stickyMessages.set(channelId, { content: content, lastMessageId: newMsg.id });
-        saveDB(STICKY_FILE, Object.fromEntries(stickyMessages));
-        
-        await message.delete().catch(() => {});
-        return;
-    }
-
-    if (message.content === '?unstick') {
-        if (!isManager) return message.reply('❌ 관리자만 사용할 수 있습니다.');
-        
-        if (stickyMessages.has(channelId)) {
-            const existing = stickyMessages.get(channelId);
-            try {
-                const oldMsg = await message.channel.messages.fetch(existing.lastMessageId);
-                if (oldMsg) await oldMsg.delete();
-            } catch (e) {}
-
-            stickyMessages.delete(channelId);
-            saveDB(STICKY_FILE, Object.fromEntries(stickyMessages));
-            
-            const reply = await message.reply('✅ 고정 메시지가 해제되었습니다.');
-            setTimeout(() => {
-                reply.delete().catch(() => {});
-                message.delete().catch(() => {});
-            }, 3000);
-        }
-        return;
-    }
-
+    // --------------------------------------------------
+    // 1. 기존 출석 체크 로직
+    // --------------------------------------------------
     if (message.content === '!출석') {
-        if (channelId !== ATTENDANCE_CHANNEL_ID) {
-            await message.reply('❌ 지정된 출석 채널에서만 출석할 수 있습니다.');
-        } else {
-            const db = loadDB(DB_FILE);
-            const userId = message.author.id;
-            const todayInfo = getTodayInfo();
+        if (message.channelId !== ATTENDANCE_CHANNEL_ID) {
+            return message.reply('❌ 지정된 출석 채널에서만 출석할 수 있습니다.');
+        } 
+        
+        const db = loadDB(DB_FILE);
+        const userId = message.author.id;
+        const todayInfo = getTodayInfo();
+        const userData = getUserDB(db, userId);
 
-            if (!db[userId]) db[userId] = { count: 0, lastDate: '' };
+        if (userData.lastDate === todayInfo.dateString) {
+            return message.reply('✅ 오늘은 이미 출석하셨습니다! 내일 다시 와주세요.');
+        } 
+        
+        userData.count += 1;
+        userData.lastDate = todayInfo.dateString;
+        saveDB(DB_FILE, db);
 
-            if (db[userId].lastDate === todayInfo.dateString) {
-                await message.reply('✅ 오늘은 이미 출석하셨습니다! 내일 다시 와주세요.');
-            } else {
-                db[userId].count += 1;
-                db[userId].lastDate = todayInfo.dateString;
-                saveDB(DB_FILE, db);
+        let replyMsg = `📅 **${todayInfo.dateString} (${todayInfo.dayName})**\n✅ **${message.member.displayName}**님, 출석 완료! (총 출석 횟수: **${userData.count}회**)`;
 
-                let replyMsg = `📅 **${todayInfo.dateString} (${todayInfo.dayName})**\n✅ **${message.member.displayName}**님, 출석 완료! (총 출석 횟수: **${db[userId].count}회**)`;
-
-                const isUpgraded = await updateRoles(message.member, db[userId].count);
-                if (isUpgraded) {
-                    replyMsg += `\n🎉 **역할 업그레이드!** 기존 역할이 회수되고 새로운 달성 역할을 획득하셨습니다!`;
-                }
-
-                await message.reply(replyMsg);
-            }
+        const isUpgraded = await updateRoles(message.member, userData.count);
+        if (isUpgraded) {
+            replyMsg += `\n🎉 **역할 업그레이드!** 기존 역할이 회수되고 새로운 달성 역할을 획득하셨습니다!`;
         }
+
+        await message.reply(replyMsg);
     }
 
-    const stickyData = stickyMessages.get(channelId);
-    if (stickyData) {
+    // --------------------------------------------------
+    // 2. 고정 메시지(Sticky) 명령어 처리 (!고정공지, !공지해지)
+    // --------------------------------------------------
+    const isManager = message.member && (message.member.roles.cache.has(MANAGER_ROLE_ID) || message.member.permissions.has('Administrator'));
+
+    // 고정 메시지 설정 명령어
+    if (message.content.startsWith('!고정공지 ') && isManager) {
+        const content = message.content.replace('!고정공지 ', '').trim();
+        if (!content) return message.reply('❌ 고정할 내용을 입력해주세요. (예: `!고정공지 공지내용`)');
+
+        // 기존 고정 메시지가 있다면 삭제
+        const existingData = stickyMessages.get(message.channelId);
+        if (existingData && existingData.lastMessageId) {
+            try {
+                const oldMsg = await message.channel.messages.fetch(existingData.lastMessageId);
+                if (oldMsg) await oldMsg.delete();
+            } catch (error) { /* 이미 지워진 메시지일 경우 무시 */ }
+        }
+
+        // 새 고정 메시지 전송
+        const sentMessage = await message.channel.send(`📌 **[채널 공지]**\n\n${content}`);
+
+        // 데이터 메모리 및 파일에 저장
+        const stickyData = { content: content, lastMessageId: sentMessage.id };
+        stickyMessages.set(message.channelId, stickyData);
+        
+        const db = loadDB(STICKY_FILE);
+        db[message.channelId] = stickyData;
+        saveDB(STICKY_FILE, db);
+
+        await message.delete(); // 관리자가 친 '!고정공지' 명령어 텍스트 자체는 깔끔하게 삭제
+        return;
+    }
+
+    // 고정 메시지 해제 명령어
+    if (message.content === '!공지해지' && isManager) {
+        const existingData = stickyMessages.get(message.channelId);
+        if (existingData) {
+            if (existingData.lastMessageId) {
+                try {
+                    const oldMsg = await message.channel.messages.fetch(existingData.lastMessageId);
+                    if (oldMsg) await oldMsg.delete();
+                } catch (error) {}
+            }
+            
+            // 데이터 삭제
+            stickyMessages.delete(message.channelId);
+            const db = loadDB(STICKY_FILE);
+            delete db[message.channelId];
+            saveDB(STICKY_FILE, db);
+            
+            await message.channel.send('✅ 이 채널의 고정 메시지가 해제되었습니다.').then(m => setTimeout(() => m.delete(), 3000));
+            await message.delete();
+        }
+        return;
+    }
+
+    // --------------------------------------------------
+    // 3. 누군가 채팅을 쳤을 때 고정 메시지 끌어내리기 (갱신)
+    // --------------------------------------------------
+    if (stickyMessages.has(message.channelId)) {
+        const stickyData = stickyMessages.get(message.channelId);
+        
+        // 1) 기존 고정 메시지 삭제 시도
         if (stickyData.lastMessageId) {
             try {
                 const oldMsg = await message.channel.messages.fetch(stickyData.lastMessageId);
                 if (oldMsg) await oldMsg.delete();
-            } catch (error) {}
+            } catch (error) {
+                // 메시지를 찾을 수 없는 경우 무시 (누군가 수동으로 지웠을 때 대비)
+            }
         }
 
-        const stickyEmbed = new EmbedBuilder()
-            .setColor('#FFD700')
-            .setTitle('📌 [ 공 지 사 항 ]')
-            .setDescription(`\`\`\`\n${stickyData.content}\n\`\`\``);
-
-        try {
-            const newMsg = await message.channel.send({ embeds: [stickyEmbed] });
-            stickyData.lastMessageId = newMsg.id;
-            stickyMessages.set(channelId, stickyData);
-            saveDB(STICKY_FILE, Object.fromEntries(stickyMessages));
-        } catch (error) {
-            console.error('고정 메시지 갱신 오류:', error);
-        }
+        // 2) 맨 아래에 새 메시지로 다시 전송
+        const sentMessage = await message.channel.send(`📌 **[채널 공지]**\n\n${stickyData.content}`);
+        
+        // 3) 새로 보낸 메시지의 ID를 갱신하여 저장
+        stickyData.lastMessageId = sentMessage.id;
+        stickyMessages.set(message.channelId, stickyData);
+        
+        const db = loadDB(STICKY_FILE);
+        db[message.channelId] = stickyData;
+        saveDB(STICKY_FILE, db);
     }
 });
 
-// ==========================================
 // [6] 슬래시 명령어 이벤트 핸들러
-// ==========================================
 client.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
@@ -256,10 +264,11 @@ client.on('interactionCreate', async interaction => {
     if (command === '출석조절') {
         const targetUser = interaction.options.getUser('대상');
         const newCount = interaction.options.getInteger('횟수');
+        
         const db = loadDB(DB_FILE);
-
-        if (!db[targetUser.id]) db[targetUser.id] = { count: 0, lastDate: '' };
-        db[targetUser.id].count = newCount;
+        const userData = getUserDB(db, targetUser.id);
+        
+        userData.count = newCount;
         saveDB(DB_FILE, db);
 
         const targetMember = await interaction.guild.members.fetch(targetUser.id).catch(() => null);
@@ -279,22 +288,19 @@ client.on('interactionCreate', async interaction => {
 
         return interaction.reply(`✅ 세팅 완료! 앞으로 출석 **${reqCount}회** 달성 시 **<@&${role.id}>** 역할이 지급됩니다.`);
     }
+
+    if (command === '공지') {
+        const content = interaction.options.getString('내용');
+        await interaction.channel.send(content);
+        return interaction.reply({ content: '✅ 공지가 전송되었습니다.', ephemeral: true });
     }
-);
+});
 
 // ==========================================
-// [7] 24시간 유지를 위한 가짜 웹서버 (Express)
+// [7] 24시간 유지를 위한 웹서버 (Express 압축)
 // ==========================================
 const app = express();
-const port = process.env.PORT || 3000;
+app.get('/', (req, res) => res.send('봇이 24시간 살아있습니다!'));
+app.listen(process.env.PORT || 3000, () => console.log(`🌐 가짜 웹서버가 실행 중입니다.`));
 
-app.get('/', (req, res) => {
-    res.send('봇이 24시간 살아있습니다!');
-});
-
-app.listen(port, () => {
-    console.log(`🌐 가짜 웹서버가 포트 ${port}에서 실행 중입니다.`);
-});
-
-// 디스코드 봇 로그인 실행
 client.login(TOKEN);
