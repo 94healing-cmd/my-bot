@@ -98,9 +98,9 @@ async function deleteMessageSafe(channel, messageId) {
 
 async function sendStickyEmbed(channel, content) {
     const stickyEmbed = new EmbedBuilder()
-        .setTitle('📌 [채널 공지]')
+        .setTitle('📌 [ 공지 ]')
         .setDescription(content)
-        .setColor('#fa9d48');
+        .setColor('#ff9839');
     return await channel.send({ embeds: [stickyEmbed] });
 }
 
