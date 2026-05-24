@@ -5,7 +5,11 @@ const {
     Routes,
     SlashCommandBuilder,
     PermissionFlagsBits,
-    EmbedBuilder
+    EmbedBuilder,
+    ModalBuilder,         // 🚀 [추가] 팝업창 생성용
+    TextInputBuilder,     // 🚀 [추가] 팝업창 텍스트 입력칸
+    TextInputStyle,       // 🚀 [추가] 텍스트 입력칸 스타일 (여러 줄)
+    ActionRowBuilder      // 🚀 [추가] 컴포넌트 배치용
 } = require('discord.js');
 const fs = require('fs');
 const express = require('express');
@@ -23,7 +27,6 @@ const REWARD_FILE = './rewards.json';
 const STICKY_FILE = './sticky.json'; 
 
 const stickyMessages = new Map(); 
-// 🚀 [추가] 고정 공지 중복 방지를 위한 Lock(잠금) 장치
 const isStickyUpdating = new Set(); 
 
 const client = new Client({
@@ -137,8 +140,7 @@ const commands = [
     new SlashCommandBuilder()
         .setName('고정공지')
         .setDescription('채널 맨 아래를 따라다니는 고정 공지를 설정합니다. (관리자 전용)')
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
-        .addStringOption(opt => opt.setName('내용').setDescription('내용을 입력하세요. (줄바꿈은 \\n 입력)').setRequired(true)),
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator), // 🚀 [수정] 옵션을 없애고 팝업창을 띄우도록 변경
     new SlashCommandBuilder()
         .setName('공지해지')
         .setDescription('현재 채널의 고정 공지를 해제합니다. (관리자 전용)')
@@ -204,10 +206,8 @@ client.on('messageCreate', async message => {
 
     // 2. 누군가 채팅을 쳤을 때 고정 메시지 끌어내리기
     if (stickyMessages.has(message.channelId)) {
-        // 🚀 이미 업데이트 로직이 돌고 있다면 중단 (중복 방지)
         if (isStickyUpdating.has(message.channelId)) return;
         
-        // 락 걸기
         isStickyUpdating.add(message.channelId);
 
         try {
@@ -217,16 +217,39 @@ client.on('messageCreate', async message => {
             stickyData.lastMessageId = sentMessage.id;
             saveStickyData(message.channelId, stickyData);
         } finally {
-            // 처리가 끝나면 락 해제
             isStickyUpdating.delete(message.channelId);
         }
     }
 });
 
 // ==========================================
-// [6] 슬래시 명령어 이벤트 핸들러
+// [6] 슬래시 명령어 및 팝업(모달) 이벤트 핸들러
 // ==========================================
 client.on('interactionCreate', async interaction => {
+    // ------------------------------------------
+    // 🚀 [새로운 기능] 모달창(팝업) 제출 이벤트 처리
+    // ------------------------------------------
+    if (interaction.isModalSubmit()) {
+        if (interaction.customId === 'stickyModal') {
+            // 사용자가 모달창에 엔터키 포함해서 입력한 텍스트 그대로 가져오기
+            const content = interaction.fields.getTextInputValue('stickyContent');
+
+            const existingData = stickyMessages.get(interaction.channelId);
+            if (existingData) {
+                await deleteMessageSafe(interaction.channel, existingData.lastMessageId);
+            }
+
+            const sentMessage = await sendStickyEmbed(interaction.channel, content);
+            saveStickyData(interaction.channelId, { content: content, lastMessageId: sentMessage.id });
+
+            return interaction.reply({ content: '✅ 고정 공지가 설정되었습니다.', ephemeral: true });
+        }
+        return;
+    }
+
+    // ------------------------------------------
+    // 기존 슬래시 명령어 처리
+    // ------------------------------------------
     if (!interaction.isChatInputCommand()) return;
 
     const command = interaction.commandName;
@@ -236,7 +259,6 @@ client.on('interactionCreate', async interaction => {
         return interaction.reply({ content: '❌ 이 명령어를 사용할 권한이 없습니다.', ephemeral: true });
     }
 
-    // ... [출석조절, 보상설정 코드는 동일하므로 생략 없이 유지] ...
     if (command === '출석조절') {
         const targetUser = interaction.options.getUser('대상');
         const newCount = interaction.options.getInteger('횟수');
@@ -259,21 +281,24 @@ client.on('interactionCreate', async interaction => {
         return interaction.reply(`✅ 세팅 완료! 앞으로 출석 **${reqCount}회** 달성 시 **<@&${role.id}>** 역할이 지급됩니다.`);
     }
 
+    // 🚀 [수정] 텍스트 입력창 대신 모달(팝업) 띄우기
     if (command === '고정공지') {
-        // 🚀 [추가] 사용자가 입력한 '\n'을 실제 줄바꿈(엔터)으로 변환
-        let content = interaction.options.getString('내용');
-        content = content.replace(/\\n/g, '\n');
+        const modal = new ModalBuilder()
+            .setCustomId('stickyModal')
+            .setTitle('고정 공지 설정');
 
-        const existingData = stickyMessages.get(interaction.channelId);
+        // Paragraph 스타일을 사용하면 사용자가 엔터를 치며 넓은 화면에서 작성할 수 있습니다.
+        const stickyInput = new TextInputBuilder()
+            .setCustomId('stickyContent')
+            .setLabel('공지할 내용을 입력하세요 (엔터로 줄바꿈 가능)')
+            .setStyle(TextInputStyle.Paragraph)
+            .setRequired(true);
 
-        if (existingData) {
-            await deleteMessageSafe(interaction.channel, existingData.lastMessageId);
-        }
+        const firstActionRow = new ActionRowBuilder().addComponents(stickyInput);
+        modal.addComponents(firstActionRow);
 
-        const sentMessage = await sendStickyEmbed(interaction.channel, content);
-        saveStickyData(interaction.channelId, { content: content, lastMessageId: sentMessage.id });
-
-        return interaction.reply({ content: '✅ 고정 공지가 설정되었습니다.', ephemeral: true });
+        // 유저에게 모달 창을 보여줍니다.
+        await interaction.showModal(modal);
     }
 
     if (command === '공지해지') {
