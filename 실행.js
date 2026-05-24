@@ -186,6 +186,9 @@ client.on('messageCreate', async (message) => {
 
     // !출석순위
     if (message.content === '!출석순위') {
+        // [추가된 부분] 출석 채널이 아니면 명령어를 무시합니다.
+        if (message.channelId !== 1445449644678320198) return;
+
         const db = loadDB(DB_FILE);
         const rankList = generateRankingList(db, 100);
 
