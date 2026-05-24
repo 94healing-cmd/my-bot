@@ -63,7 +63,6 @@ const loadDB = (file) => {
 
 const saveDB = (file, data) => {
     try {
-        // 저장 직전 백업 생성 (업데이트 중 파일 깨짐 방지)
         if (fs.existsSync(file)) {
             fs.copyFileSync(file, file + '.bak');
         }
@@ -115,7 +114,7 @@ async function updateRoles(member, currentCount) {
 // [3] 명령어 구성
 // ==========================================
 const commands = [
-    new SlashCommandBuilder().setName('출석순위').setDescription('출석 랭킹 TOP 15를 확인합니다.'),
+    new SlashCommandBuilder().setName('출석순위').setDescription('출석 랭킹 TOP 50를 확인합니다.'),
     new SlashCommandBuilder().setName('출석조절').setDescription('유저의 출석 횟수를 변경 (관리자)')
         .addUserOption(o => o.setName('대상').setDescription('대상 유저').setRequired(true))
         .addIntegerOption(o => o.setName('횟수').setDescription('변경할 횟수').setRequired(true)),
@@ -144,7 +143,6 @@ client.once('ready', async () => {
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
 
-    // --- 1. 출석체크 (!출석) ---
     if (message.content === '!출석' && message.channelId === ATTENDANCE_CHANNEL_ID) {
         const db = loadDB(DB_FILE);
         const today = getTodayInfo();
@@ -156,7 +154,7 @@ client.on('messageCreate', async (message) => {
 
         userData.count += 1;
         userData.lastDate = today.dateString;
-        saveDB(DB_FILE, db); // 즉시 저장
+        saveDB(DB_FILE, db);
 
         let replyMsg = `✅ **${message.member.displayName}**님, 출석 완료! (총 **${userData.count}회**)`;
         const upgraded = await updateRoles(message.member, userData.count);
@@ -164,13 +162,14 @@ client.on('messageCreate', async (message) => {
         return message.reply(replyMsg);
     }
 
-    // --- 2. 랭킹 조회 (!출석순위) : 모든 유저 사용 가능 ---
+    // [수정됨] !출석순위
     if (message.content === '!출석순위') {
         const db = loadDB(DB_FILE);
         const ranking = Object.entries(db)
             .map(([id, data]) => ({ id, count: data.count }))
+            .filter(u => u.count > 0) // 0회 필터링
             .sort((a, b) => b.count - a.count)
-            .slice(0, 50);
+            .slice(0, 50); // 50위까지
 
         if (ranking.length === 0) return message.reply('❌ 등록된 출석 데이터가 없습니다.');
 
@@ -179,12 +178,12 @@ client.on('messageCreate', async (message) => {
             .setTitle('🏆 전체 출석 랭킹 TOP 50')
             .setDescription(rankList)
             .setColor('#f1c40f')
-            .setFooter({ text: '매일 !출석으로 순위를 높여보세요!' });
+            .setFooter({ text: '관리자가 조정한 횟수도 실시간으로 반영됩니다!' });
 
         return message.reply({ embeds: [rankEmbed] });
     }
 
-    // --- 3. TTS 기능 ---
+    // TTS 기능
     if (message.channelId === TTS_CHANNEL_ID) {
         if (message.content === '!입장') {
             const vc = message.member.voice.channel;
@@ -204,7 +203,7 @@ client.on('messageCreate', async (message) => {
         }
     }
 
-    // --- 4. 고정 공지 유지 ---
+    // 고정 공지 유지
     if (stickyMessages.has(message.channelId) && !isStickyUpdating.has(message.channelId)) {
         isStickyUpdating.add(message.channelId);
         try {
@@ -243,28 +242,37 @@ client.on('interactionCreate', async (interaction) => {
 
     if (!interaction.isChatInputCommand()) return;
 
-    // 순위 확인 (출석순위) : 누구나 가능
+    // [수정됨] 슬래시 명령어 /출석순위 동기화
     if (interaction.commandName === '출석순위') {
         const db = loadDB(DB_FILE);
-        const ranking = Object.entries(db).map(([id, d]) => ({ id, count: d.count })).sort((a, b) => b.count - a.count).slice(0, 15);
-        let desc = ranking.length ? ranking.map((u, i) => `**${i + 1}위** | <@${u.id}> : ${u.count}회`).join('\n') : '데이터가 없습니다.';
-        return interaction.reply({ embeds: [new EmbedBuilder().setTitle('🏆 출석 랭킹').setDescription(desc).setColor('#f1c40f')] });
+        const ranking = Object.entries(db)
+            .map(([id, d]) => ({ id, count: d.count }))
+            .filter(u => u.count > 0) // 0회 필터링
+            .sort((a, b) => b.count - a.count)
+            .slice(0, 50); // 50위까지
+
+        let desc = ranking.length ? ranking.map((u, i) => `**${i + 1}위** | <@${u.id}> : **${u.count}회**`).join('\n') : '❌ 데이터가 없습니다.';
+        return interaction.reply({ embeds: [new EmbedBuilder().setTitle('🏆 전체 출석 랭킹 TOP 50').setDescription(desc).setColor('#f1c40f')] });
     }
 
-    // 관리자 체크
+    // 관리자 권한 체크
     const isManager = interaction.member.roles.cache.has(MANAGER_ROLE_ID) || interaction.member.permissions.has(PermissionFlagsBits.Administrator);
     if (!isManager) return interaction.reply({ content: '❌ 관리자 전용 권한입니다.', ephemeral: true });
 
+    // 출석 조절 (이 로직이 실행되면 즉시 DB 파일이 업데이트되므로, 이후 순위 명령어 입력 시 자동 반영됩니다.)
     if (interaction.commandName === '출석조절') {
         const user = interaction.options.getUser('대상');
         const count = interaction.options.getInteger('횟수');
         const db = loadDB(DB_FILE);
         const userData = getUserDB(db, user.id);
+        
         userData.count = count;
-        saveDB(DB_FILE, db);
+        saveDB(DB_FILE, db); // 파일에 즉시 저장
+        
         const targetMember = await interaction.guild.members.fetch(user.id).catch(() => null);
         if (targetMember) await updateRoles(targetMember, count);
-        return interaction.reply(`🔧 <@${user.id}>님의 횟수를 **${count}회**로 변경했습니다.`);
+        
+        return interaction.reply(`🔧 <@${user.id}>님의 출석 횟수가 **${count}회**로 변경되었습니다. (순위표 자동 반영 완료)`);
     }
 
     if (interaction.commandName === '보상설정') {
