@@ -5,7 +5,7 @@ const {
     Routes,
     SlashCommandBuilder,
     PermissionFlagsBits,
-    EmbedBuilder // 👈 [추가됨] 임베드를 만들기 위해 추가
+    EmbedBuilder
 } = require('discord.js');
 const fs = require('fs');
 const express = require('express');
@@ -83,6 +83,41 @@ async function updateRoles(member, currentCount) {
     return false;
 }
 
+// ------------------------------------------
+// 🛠 고정 메시지 전용 유틸리티 (중복 제거용)
+// ------------------------------------------
+async function deleteMessageSafe(channel, messageId) {
+    if (!messageId) return;
+    try {
+        const oldMsg = await channel.messages.fetch(messageId);
+        if (oldMsg) await oldMsg.delete();
+    } catch (error) {
+        // 이미 삭제되었거나 권한 부족 등 예외 무시
+    }
+}
+
+async function sendStickyEmbed(channel, content) {
+    const stickyEmbed = new EmbedBuilder()
+        .setTitle('📌 [채널 공지]')
+        .setDescription(content)
+        .setColor('#fa9d48');
+    return await channel.send({ embeds: [stickyEmbed] });
+}
+
+function saveStickyData(channelId, data) {
+    stickyMessages.set(channelId, data);
+    const db = loadDB(STICKY_FILE);
+    db[channelId] = data;
+    saveDB(STICKY_FILE, db);
+}
+
+function removeStickyData(channelId) {
+    stickyMessages.delete(channelId);
+    const db = loadDB(STICKY_FILE);
+    delete db[channelId];
+    saveDB(STICKY_FILE, db);
+}
+
 // ==========================================
 // [3] 슬래시 명령어 세팅
 // ==========================================
@@ -134,7 +169,6 @@ client.once('ready', async () => {
 // [5] 채팅 메시지 이벤트 (!출석 및 고정 메시지 갱신)
 // ==========================================
 client.on('messageCreate', async message => {
-    // 봇이 보낸 메시지는 무시
     if (message.author.bot) return;
 
     // --------------------------------------------------
@@ -169,36 +203,17 @@ client.on('messageCreate', async message => {
     }
 
     // --------------------------------------------------
-    // 2. 누군가 채팅을 쳤을 때 고정 메시지 끌어내리기 (갱신)
+    // 2. 누군가 채팅을 쳤을 때 고정 메시지 끌어내리기
     // --------------------------------------------------
     if (stickyMessages.has(message.channelId)) {
         const stickyData = stickyMessages.get(message.channelId);
         
-        // 1) 기존 고정 메시지 삭제 시도
-        if (stickyData.lastMessageId) {
-            try {
-                const oldMsg = await message.channel.messages.fetch(stickyData.lastMessageId);
-                if (oldMsg) await oldMsg.delete();
-            } catch (error) {
-                // 수동 삭제 등 예외 무시
-            }
-        }
-
-        // 2) 임베드로 새 메시지 전송 👈 [수정됨]
-        const stickyEmbed = new EmbedBuilder()
-            .setTitle('📌 [채널 공지]')
-            .setDescription(stickyData.content)
-            .setColor('#fa9d48'); // 띠 색상 (원하는 HEX 컬러코드로 변경 가능)
-
-        const sentMessage = await message.channel.send({ embeds: [stickyEmbed] });
+        // 유틸리티 함수들을 활용하여 코드 간소화
+        await deleteMessageSafe(message.channel, stickyData.lastMessageId);
+        const sentMessage = await sendStickyEmbed(message.channel, stickyData.content);
         
-        // 3) 새로 보낸 메시지의 ID를 갱신하여 저장
         stickyData.lastMessageId = sentMessage.id;
-        stickyMessages.set(message.channelId, stickyData);
-        
-        const db = loadDB(STICKY_FILE);
-        db[message.channelId] = stickyData;
-        saveDB(STICKY_FILE, db);
+        saveStickyData(message.channelId, stickyData);
     }
 });
 
@@ -245,51 +260,26 @@ client.on('interactionCreate', async interaction => {
 
     if (command === '고정공지') {
         const content = interaction.options.getString('내용');
-
-        // 기존 고정 메시지 삭제
         const existingData = stickyMessages.get(interaction.channelId);
-        if (existingData && existingData.lastMessageId) {
-            try {
-                const oldMsg = await interaction.channel.messages.fetch(existingData.lastMessageId);
-                if (oldMsg) await oldMsg.delete();
-            } catch (error) {}
+
+        // 기존 고정 메시지가 있으면 삭제
+        if (existingData) {
+            await deleteMessageSafe(interaction.channel, existingData.lastMessageId);
         }
 
-        // 새 고정 메시지를 임베드로 전송 👈 [수정됨]
-        const stickyEmbed = new EmbedBuilder()
-            .setTitle('📌 [채널 공지]')
-            .setDescription(content)
-            .setColor('#fa9d48'); // 띠 색상 (원하는 HEX 컬러코드로 변경 가능)
+        // 새 임베드 전송 및 데이터 저장
+        const sentMessage = await sendStickyEmbed(interaction.channel, content);
+        saveStickyData(interaction.channelId, { content: content, lastMessageId: sentMessage.id });
 
-        const sentMessage = await interaction.channel.send({ embeds: [stickyEmbed] });
-
-        // 데이터 저장
-        const stickyData = { content: content, lastMessageId: sentMessage.id };
-        stickyMessages.set(interaction.channelId, stickyData);
-        
-        const db = loadDB(STICKY_FILE);
-        db[interaction.channelId] = stickyData;
-        saveDB(STICKY_FILE, db);
-
-        // 명령어 응답 (관리자만 볼 수 있게)
         return interaction.reply({ content: '✅ 고정 공지가 설정되었습니다.', ephemeral: true });
     }
 
     if (command === '공지해지') {
         const existingData = stickyMessages.get(interaction.channelId);
+        
         if (existingData) {
-            if (existingData.lastMessageId) {
-                try {
-                    const oldMsg = await interaction.channel.messages.fetch(existingData.lastMessageId);
-                    if (oldMsg) await oldMsg.delete();
-                } catch (error) {}
-            }
-            
-            // 데이터 삭제
-            stickyMessages.delete(interaction.channelId);
-            const db = loadDB(STICKY_FILE);
-            delete db[interaction.channelId];
-            saveDB(STICKY_FILE, db);
+            await deleteMessageSafe(interaction.channel, existingData.lastMessageId);
+            removeStickyData(interaction.channelId);
             
             return interaction.reply({ content: '✅ 이 채널의 고정 메시지가 해제되었습니다.', ephemeral: true });
         } else {
