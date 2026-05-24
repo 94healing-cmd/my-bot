@@ -147,7 +147,7 @@ const commands = [
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
     // 🚀 [추가] 출석 횟수 조회 명령어
     new SlashCommandBuilder()
-        .setName('출석확인')
+        .setName('출석순위')
         .setDescription('유저의 출석 횟수를 확인합니다.')
         .addUserOption(opt => opt.setName('대상').setDescription('확인할 유저를 선택하세요 (비워두면 본인 확인)').setRequired(false))
 ].map(command => command.toJSON());
@@ -223,17 +223,39 @@ const saveDB = (file, data) => {
     fs.writeFileSync(file, JSON.stringify(data, null, 2));
 };
 // --------------------------------------------------
-// [추가] 출석 횟수 확인 로직 (!출석확인)
+// [추가] 출석 횟수 확인 로직 (!출석순위)
 // --------------------------------------------------
-if (message.content === '!출석확인') {
-    const db = loadDB(DB_FILE); // DB 파일 로드
-    const userId = message.author.id; // 명령어를 친 유저 ID
-    
-    // 유저 데이터가 있으면 count를 가져오고, 없으면 0으로 설정
-    const userData = db[userId] || { count: 0 };
-    
-    return message.reply(`📊 **${message.member.displayName}**님의 현재까지 총 출석 횟수는 **${userData.count}회**입니다.`);
-}
+if (command === '!출석순위') {
+        const db = loadDB(DB_FILE);
+        
+        // 1. DB에서 모든 유저 데이터를 배열로 변환
+        const ranking = Object.entries(db)
+            .map(([userId, data]) => ({ userId, count: data.count }))
+            .sort((a, b) => b.count - a.count); // 2. 횟수 기준 내림차순 정렬
+
+        if (ranking.length === 0) {
+            return interaction.reply({ content: '❌ 아직 출석 기록이 없습니다.' });
+        }
+
+        // 3. 상위 100명만 뽑아서 깔끔하게 출력 (필요시 조절 가능)
+        let description = '';
+        for (let i = 0; i < Math.min(ranking.length, 100); i++) {
+            const rank = i + 1;
+            const user = ranking[i];
+            // 멘션 형식(<@ID>)으로 유저 표시
+            description += `${rank}위: <@${user.userId}> - **${user.count}회**\n`;
+        }
+
+        // 4. 임베드 메시지 생성
+        const rankEmbed = new EmbedBuilder()
+            .setTitle('🏆 출석 랭킹 TOP 10')
+            .setDescription(description)
+            .setColor('#f1c40f')
+            .setTimestamp();
+
+        // 5. ephemeral을 false로 설정하여 모든 사람이 볼 수 있게 변경
+        return interaction.reply({ embeds: [rankEmbed], ephemeral: false });
+    }
     // 2. 누군가 채팅을 쳤을 때 고정 메시지 끌어내리기
     if (stickyMessages.has(message.channelId)) {
         if (isStickyUpdating.has(message.channelId)) return;
