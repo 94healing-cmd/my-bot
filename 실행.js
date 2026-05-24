@@ -14,6 +14,7 @@ const {
 const { joinVoiceChannel, createAudioPlayer, createAudioResource } = require('@discordjs/voice');
 const googleTTS = require('google-tts-api');
 const fs = require('fs');
+const path = require('path'); // 안전한 파일 경로 설정을 위해 추가
 const express = require('express');
 
 // ==========================================
@@ -25,9 +26,10 @@ const ATTENDANCE_CHANNEL_ID = '1445449644678320198';
 const TTS_CHANNEL_ID = '1505249610632007861';
 const MANAGER_ROLE_ID = '1445443506175873164';
 
-const DB_FILE = './attendance.json';
-const REWARD_FILE = './rewards.json';
-const STICKY_FILE = './sticky.json';
+// 로컬 파일 경로를 절대 경로로 고정하여 경로 꼬임 방지
+const DB_FILE = path.join(__dirname, 'attendance.json');
+const REWARD_FILE = path.join(__dirname, 'rewards.json');
+const STICKY_FILE = path.join(__dirname, 'sticky.json');
 
 const stickyMessages = new Map();
 const isStickyUpdating = new Set();
@@ -96,7 +98,6 @@ function generateRankingList(db, limit = 100) {
     let list = "";
     for (let i = 0; i < Math.min(sorted.length, limit); i++) {
         const line = `**${i + 1}위** | <@${sorted[i].id}> - **${sorted[i].count}회**\n`;
-        // 디스코드 Embed 설명란 제한(4096자)을 넘지 않도록 체크
         if ((list + line).length > 3900) {
             list += "...하위 순위 생략";
             break;
@@ -183,7 +184,7 @@ client.on('messageCreate', async (message) => {
         return message.reply(replyMsg);
     }
 
-    // !출석순위 (수정됨: 0회 제외 및 최대 100명 출력)
+    // !출석순위
     if (message.content === '!출석순위') {
         const db = loadDB(DB_FILE);
         const rankList = generateRankingList(db, 100);
@@ -198,7 +199,7 @@ client.on('messageCreate', async (message) => {
         return message.reply({ embeds: [rankEmbed] });
     }
 
-    // TTS & 고정공지 로직 (기존과 동일)
+    // TTS & 고정공지
     if (message.channelId === TTS_CHANNEL_ID) {
         if (message.content === '!입장') {
             const vc = message.member.voice.channel;
@@ -254,7 +255,6 @@ client.on('interactionCreate', async (interaction) => {
 
     if (!interaction.isChatInputCommand()) return;
 
-    // /출석순위 (슬래시 명령어도 동일하게 수정)
     if (interaction.commandName === '출석순위') {
         const db = loadDB(DB_FILE);
         const rankList = generateRankingList(db, 100);
