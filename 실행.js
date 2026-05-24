@@ -4,7 +4,8 @@ const {
     REST,
     Routes,
     SlashCommandBuilder,
-    PermissionFlagsBits
+    PermissionFlagsBits,
+    EmbedBuilder // 👈 [추가됨] 임베드를 만들기 위해 추가
 } = require('discord.js');
 const fs = require('fs');
 const express = require('express');
@@ -83,7 +84,7 @@ async function updateRoles(member, currentCount) {
 }
 
 // ==========================================
-// [3] 슬래시 명령어 세팅 (고정공지, 공지해지 추가)
+// [3] 슬래시 명령어 세팅
 // ==========================================
 const commands = [
     new SlashCommandBuilder()
@@ -183,8 +184,13 @@ client.on('messageCreate', async message => {
             }
         }
 
-        // 2) 맨 아래에 새 메시지로 다시 전송
-        const sentMessage = await message.channel.send(`📌 **[채널 공지]**\n\n${stickyData.content}`);
+        // 2) 임베드로 새 메시지 전송 👈 [수정됨]
+        const stickyEmbed = new EmbedBuilder()
+            .setTitle('📌 [채널 공지]')
+            .setDescription(stickyData.content)
+            .setColor('#fa9d48'); // 띠 색상 (원하는 HEX 컬러코드로 변경 가능)
+
+        const sentMessage = await message.channel.send({ embeds: [stickyEmbed] });
         
         // 3) 새로 보낸 메시지의 ID를 갱신하여 저장
         stickyData.lastMessageId = sentMessage.id;
@@ -249,8 +255,13 @@ client.on('interactionCreate', async interaction => {
             } catch (error) {}
         }
 
-        // 새 고정 메시지 전송
-        const sentMessage = await interaction.channel.send(`📌 **[채널 공지]**\n\n${content}`);
+        // 새 고정 메시지를 임베드로 전송 👈 [수정됨]
+        const stickyEmbed = new EmbedBuilder()
+            .setTitle('📌 [채널 공지]')
+            .setDescription(content)
+            .setColor('#fa9d48'); // 띠 색상 (원하는 HEX 컬러코드로 변경 가능)
+
+        const sentMessage = await interaction.channel.send({ embeds: [stickyEmbed] });
 
         // 데이터 저장
         const stickyData = { content: content, lastMessageId: sentMessage.id };
