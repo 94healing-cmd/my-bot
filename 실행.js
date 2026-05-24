@@ -185,7 +185,30 @@ client.on('messageCreate', async message => {
         if (message.channelId !== ATTENDANCE_CHANNEL_ID) {
             return message.reply('❌ 지정된 출석 채널에서만 출석할 수 있습니다.');
         } 
-        
+    // 🚀 [추가] !출석순위 명령어 (모든 멤버가 확인 가능)
+        if (message.content === '!출석순위') {
+            const db = loadDB(DB_FILE);
+            
+            // 데이터를 순위대로 정렬
+            const ranking = Object.entries(db)
+                .map(([userId, data]) => ({ userId, count: data.count }))
+                .sort((a, b) => b.count - a.count);
+
+            if (ranking.length === 0) return message.reply('❌ 아직 출석 기록이 없습니다.');
+
+            let description = '';
+            for (let i = 0; i < Math.min(ranking.length, 100); i++) {
+                description += `${i + 1}위: <@${ranking[i].userId}> - **${ranking[i].count}회**\n`;
+            }
+
+            const rankEmbed = new EmbedBuilder()
+                .setTitle('🏆 출석 랭킹 TOP 100')
+                .setDescription(description)
+                .setColor('#f1c40f');
+
+            return message.reply({ embeds: [rankEmbed] });
+        }
+    }    
         const db = loadDB(DB_FILE);
         const userId = message.author.id;
         const todayInfo = getTodayInfo();
@@ -248,7 +271,7 @@ if (command === '!출석순위') {
 
         // 4. 임베드 메시지 생성
         const rankEmbed = new EmbedBuilder()
-            .setTitle('🏆 출석 랭킹 TOP 10')
+            .setTitle('🏆 출석 랭킹 TOP 100')
             .setDescription(description)
             .setColor('#f1c40f')
             .setTimestamp();
