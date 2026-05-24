@@ -45,6 +45,18 @@ const loadDB = (file) => {
     if (!fs.existsSync(file)) fs.writeFileSync(file, JSON.stringify({}));
     return JSON.parse(fs.readFileSync(file, 'utf8'));
 };
+// [추가] 데이터 파일이 깨질 경우를 대비한 자동 백업 함수
+const backupDB = (file) => {
+    if (fs.existsSync(file)) {
+        const backupFile = file + '.bak';
+        fs.copyFileSync(file, backupFile);
+    }
+};
+
+// saveDB 함수를 살짝 수정하여 저장할 때마다 백업
+const saveDB = (file, data) => {
+    backupDB(file); // 저장하기 직전에 기존 파일을 .bak으로 복사
+    fs.writeFileSync(file, JSON.stringify(data, null, 2));
 
 const saveDB = (file, data) => fs.writeFileSync(file, JSON.stringify(data, null, 2));
 
@@ -230,23 +242,9 @@ client.on('messageCreate', async message => {
         }
 
         await message.reply(replyMsg);
-        
-    }
-// [추가] 데이터 파일이 깨질 경우를 대비한 자동 백업 함수
-const backupDB = (file) => {
-    if (fs.existsSync(file)) {
-        const backupFile = file + '.bak';
-        fs.copyFileSync(file, backupFile);
-    }
-};
 
-// saveDB 함수를 살짝 수정하여 저장할 때마다 백업
-const saveDB = (file, data) => {
-    backupDB(file); // 저장하기 직전에 기존 파일을 .bak으로 복사
-    fs.writeFileSync(file, JSON.stringify(data, null, 2));
-};
 // --------------------------------------------------
-// [추가] 출석 횟수 확인 로직 (!출석순위)
+// 출석 횟수 확인 로직 (!출석순위)
 // --------------------------------------------------
 if (command === '!출석순위') {
         const db = loadDB(DB_FILE);
@@ -485,7 +483,6 @@ client.on('messageCreate', async (message) => {
             console.error('❌ TTS 변환 오류:', error);
         }
     }
-});
 // ==========================================
 // [8] 24시간 유지를 위한 웹서버 (Express)
 // ==========================================
